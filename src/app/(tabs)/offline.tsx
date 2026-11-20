@@ -1,8 +1,8 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import OfflineMapsScreen from '@/features/offline-maps/screens/OfflineMapsScreen';
-import { validateBounds } from '@/features/offline-maps/services/regionService';
-import type { OfflineBounds } from '@/features/offline-maps/types/offlineMap';
+import OfflineRegionsScreen from '@/features/offline-regions/screens/OfflineRegionsScreen';
+import type { OfflineRegionBounds } from '@/features/offline-regions/types/offlineRegion.types';
+import { validateRegionBounds } from '@/features/offline-regions/utils/calculateBounds';
 
 export default function OfflineRoute() {
   const params = useLocalSearchParams();
@@ -17,10 +17,10 @@ export default function OfflineRoute() {
   const routeKey = [west, south, east, north, name].join('|');
 
   return (
-    <OfflineMapsScreen
+    <OfflineRegionsScreen
       key={routeKey}
       initialBounds={initialBounds}
-      initialName={initialBounds ? name || 'Map area' : ''}
+      initialName={name || 'Map area'}
     />
   );
 }
@@ -30,7 +30,7 @@ function parseBounds(
   south: string,
   east: string,
   north: string,
-): OfflineBounds | null {
+): OfflineRegionBounds | null {
   if ([west, south, east, north].some((value) => value.trim().length === 0)) {
     return null;
   }
@@ -42,7 +42,12 @@ function parseBounds(
   }
 
   try {
-    return validateBounds(values as OfflineBounds);
+    return validateRegionBounds({
+      west: values[0],
+      south: values[1],
+      east: values[2],
+      north: values[3],
+    });
   } catch {
     return null;
   }

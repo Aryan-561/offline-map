@@ -190,7 +190,7 @@ export async function startDownload(
       );
     }
 
-    const id = existing?.id ?? createRegionId();
+    const id = existing?.id ?? input.id ?? createRegionId();
     inFlightId = id;
     inFlightRegionIds.add(id);
 

@@ -33,6 +33,11 @@ export interface OfflineRegion {
 }
 
 export interface CreateOfflineRegionInput {
+  /**
+   * Optional caller-supplied record ID. The combined offline-regions feature
+   * uses one ID for both the MapLibre pack and the routing package.
+   */
+  id?: string;
   name: string;
   bounds: OfflineBounds;
   minZoom: number;
