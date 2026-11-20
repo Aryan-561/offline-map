@@ -2,11 +2,26 @@ import type { ComponentType } from 'react';
 import { Platform, TurboModuleRegistry } from 'react-native';
 
 import { MapUnavailable } from '@/components/map-unavailable';
+import type { Coordinate, RouteGeometry } from '@/features/navigation/types/navigation';
 
 import type { MapFocus } from './map-view-native';
 
+export type MapViewRegionPreview = {
+  center: Coordinate;
+  radiusKm: number;
+};
+
 type MapViewProps = {
   focus?: MapFocus | null;
+  destination?: Coordinate | null;
+  route?: RouteGeometry | null;
+  currentLocation?: Coordinate | null;
+  locationSource?: 'auto' | 'external';
+  showControls?: boolean;
+  contentBottomInset?: number;
+  onMapPress?: (coordinate: Coordinate) => void;
+  followLocation?: boolean;
+  regionPreview?: MapViewRegionPreview | null;
 };
 
 // MapLibre is a native module that is only present in a development build.
@@ -30,7 +45,18 @@ function loadNativeMap(): ComponentType<MapViewProps> | null {
 
 const NativeMapView = loadNativeMap();
 
-export default function MapView({ focus = null }: MapViewProps) {
+export default function MapView({
+  focus = null,
+  destination = null,
+  route = null,
+  currentLocation = null,
+  locationSource = 'auto',
+  showControls = true,
+  contentBottomInset,
+  onMapPress,
+  followLocation = false,
+  regionPreview = null,
+}: MapViewProps) {
   if (!NativeMapView) {
     return (
       <MapUnavailable
@@ -42,5 +68,18 @@ export default function MapView({ focus = null }: MapViewProps) {
     );
   }
 
-  return <NativeMapView focus={focus} />;
+  return (
+    <NativeMapView
+      focus={focus}
+      destination={destination}
+      route={route}
+      currentLocation={currentLocation}
+      locationSource={locationSource}
+      showControls={showControls}
+      contentBottomInset={contentBottomInset}
+      onMapPress={onMapPress}
+      followLocation={followLocation}
+      regionPreview={regionPreview}
+    />
+  );
 }
