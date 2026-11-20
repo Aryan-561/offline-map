@@ -31,6 +31,9 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.*
+!.env.example
 .env*.local
 
 # typescript
@@ -41,3 +44,9 @@ example
 # generated native folders
 /ios
 /android
+**/build/
+**/.gradle/
+**/.cxx/
+
+# generated routing packages
+tools/routing-data/data/
