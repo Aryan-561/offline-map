@@ -65,12 +65,11 @@ To use Nominatim instead, set
 Both public instances are rate-limited and not intended for production traffic;
 point `EXPO_PUBLIC_PLACE_SEARCH_URL` at a self-hosted instance before shipping.
 
-Routing packages include an optional `places.sqlite` SQLite FTS5 index. When a
-downloaded package contains it, place-name search queries the local index first
-(restricted to regions covering the current location) and falls back to the
-configured online geocoder only when the index returns nothing. Packages built
-before this index existed must be backfilled (or rebuilt) and re-downloaded
-before offline search works; see `tools/routing-data/README.md`.
+BRouter regions can include per-tile `places-*.sqlite` SQLite FTS5 indexes. When
+the tiles were built with `tools/brouter-data/places-tile.mjs`, place-name search
+queries the local indexes first (restricted to regions covering the current
+location) and falls back to the configured online geocoder only when they return
+nothing. Legacy Valhalla packages may still use their single `places.sqlite`.
 `setDestinationSearchProvider` still lets you replace the whole search chain
 without changing the UI.
 
@@ -83,46 +82,50 @@ confirmation time and reroute cooldown).
 MapLibre offline packs only contain map-rendering resources (tiles, glyphs,
 sprites and style). They do **not** contain a routing graph. Downloading a map
 region is therefore not enough on its own: the combined region flow downloads
-a Valhalla routing package for the same bounds at the same time.
+BRouter data covering the same bounds at the same time.
 
 The routing layer uses the `RoutingEngine` interface in
-`src/features/navigation/services/routingService.ts`. Online navigation uses
-`OnlineValhallaRoutingEngine`; offline regions activate the local engine through
-`src/features/navigation/services/localValhallaAdapter.ts`.
+`src/features/navigation/services/routingService.ts`. Online navigation still
+uses Valhalla. Android offline regions activate the embedded engine through
+`src/features/navigation/services/brouterAdapter.ts`; `auto` maps to the
+`car-eco` profile and `pedestrian` maps to `shortest`.
 
-The Android development build contains a local Expo module at
-`modules/valhalla-engine`, backed by
-[Valhalla Mobile](https://github.com/Rallista/valhalla-mobile) 0.6.4 (Valhalla
-3.9.1). It loads the installed routing package's `valhalla-tiles/` directory and
-answers route requests locally. The bridge is registered at app startup; if it
-is absent (Expo Go, web, or iOS), the app reports that offline routing is
-unavailable and never falls back to the network.
+The Android development build contains an Expo module at
+`modules/brouter-engine`, backed by the vendored MIT-licensed BRouter 1.7.10
+sources. Segment tiles are shared under
+`<documents>/brouter/segments4` and place indexes under
+`<documents>/brouter/places`. Each region stores a small
+`offline-regions/<id>/routing/manifest.json` that records which tiles it needs,
+so deleting one region only removes tiles no other region uses.
 
-Routing data comes from the contract in `tools/routing-data/README.md`. Copy
-`.env.example` to `.env` and set:
+iOS, web and Expo Go do not include the native module; they keep the online
+routing fallback and never claim offline navigation is ready.
+
+BRouter data is published as static assets on GitHub Releases:
+
+- `tools/brouter-data/mirror.mjs` downloads `.rd5` segment tiles.
+- `tools/brouter-data/places-tile.mjs` builds per-5-degree FTS place indexes.
+- `tools/brouter-data/upload.mjs` publishes the manifest and assets.
+
+Copy `.env.example` to `.env` and point the app at the release download URL:
 
 ```bash
-EXPO_PUBLIC_ROUTING_DATA_BASE_URL=http://<your-lan-ip>:8787
-EXPO_PUBLIC_VALHALLA_ENGINE_VERSION=3.9.1
+EXPO_PUBLIC_BROUTER_DATA_BASE_URL=https://github.com/<owner>/<repo>/releases/download/brouter-data
 ```
 
-Start the routing-data service in a second terminal before downloading a region:
+Then follow `tools/brouter-data/README.md` to mirror, build and upload. At
+runtime the app fetches `<base-url>/brouter-manifest.json`, verifies every tile
+by size and SHA-256, and installs it into the shared BRouter directory.
 
-```bash
-bun run routing-data
-```
-
-Keep the phone and computer on the same Wi-Fi network. The URL in
-`EXPO_PUBLIC_ROUTING_DATA_BASE_URL` must use the computer's LAN IP, not
-`localhost` or `127.0.0.1`. If the service is running but the phone still
-cannot connect, allow TCP port `8787` through the computer's firewall.
+BRouter tiles are 5 x 5 degrees and can be 50-250 MB each. `mirror.json` is an
+allowlist; mirror only the tiles you actually need.
 
 A region is marked navigation-ready only when both datasets are installed and
-checksum-verified and the native bridge is registered. Verify actual routing on
-a physical device with the network disabled.
+checksum-verified and the native BRouter module is registered. Verify actual
+routing on a physical Android device with the network disabled.
 
-iOS offline routing still needs a macOS prebuild and a Swift wrapper around the
-valhalla-mobile SPM product (iOS 16.4+).
+Regions downloaded with the previous Valhalla packages are not compatible with
+BRouter. Delete and re-download them after upgrading.
 
 ## Get a fresh project
 
