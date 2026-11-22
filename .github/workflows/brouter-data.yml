@@ -1,0 +1,68 @@
+name: BRouter data
+
+on:
+  workflow_dispatch:
+    inputs:
+      tiles:
+        description: Comma separated tiles (defaults to tools/brouter-data/mirror.json)
+        required: false
+        type: string
+      osm_url:
+        description: Optional OSM PBF URL used to rebuild place indexes
+        required: false
+        type: string
+      upload:
+        description: Upload the manifest and assets to the release
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    - cron: '0 4 * * 1'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install osmium
+        run: sudo apt-get update && sudo apt-get install -y osmium-tool
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Mirror segments
+        run: |
+          extra=()
+          if [ -n "${{ inputs.tiles }}" ]; then
+            extra=(--tiles "${{ inputs.tiles }}")
+          fi
+          node --env-file-if-exists=tools/brouter-data/.env \
+            tools/brouter-data/mirror.mjs "${extra[@]}"
+
+      - name: Build place indexes
+        if: ${{ inputs.osm_url != '' }}
+        run: |
+          curl -L --fail --retry 3 -o /tmp/brouter-places.osm.pbf "${{ inputs.osm_url }}"
+          extra=(--local)
+          if [ -n "${{ inputs.tiles }}" ]; then
+            extra+=(--tiles "${{ inputs.tiles }}")
+          fi
+          node --env-file-if-exists=tools/brouter-data/.env \
+            tools/brouter-data/places-tile.mjs --osm /tmp/brouter-places.osm.pbf "${extra[@]}"
+
+      - name: Upload release assets
+        if: ${{ inputs.upload || github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node --env-file-if-exists=tools/brouter-data/.env \
+            tools/brouter-data/upload.mjs --repo "${{ github.repository }}"
