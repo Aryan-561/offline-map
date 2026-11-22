@@ -192,7 +192,7 @@ export function RegionDownloadCard({
 
       {isRegionDataReady(region) && !isLocalEngineAvailable && (
         <ThemedText type="small" style={styles.warningText}>
-          Routing data is installed, but this build has no local Valhalla native module.
+          Routing data is installed, but this build has no local BRouter native module.
           Offline route calculation is disabled.
         </ThemedText>
       )}

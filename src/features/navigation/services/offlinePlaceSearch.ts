@@ -8,6 +8,7 @@ import type {
 } from './searchService';
 
 const PLACES_DATABASE_NAME = 'places.sqlite';
+const REGION_MANIFEST_NAME = 'manifest.json';
 const MAX_CANDIDATES_PER_REGION = 200;
 
 type OfflinePlaceRow = {
@@ -46,12 +47,28 @@ function boundsContainCoordinate(
   );
 }
 
-async function installedIndexesWithPlaces(
+type InstalledPlaceDatabase = {
+  regionId: string;
+  bounds: OfflineRegionBounds;
+  fileName: string;
+  directory: string;
+};
+
+async function installedPlaceDatabases(
   near: Coordinate | null,
-): Promise<InstalledRoutingIndex[]> {
-  const [{ listInstalledRoutingIndexes }, { File }] = await Promise.all([
+): Promise<InstalledPlaceDatabase[]> {
+  const [
+    { listInstalledRoutingIndexes },
+    { File },
+    {
+      brouterPlacesDatabaseName,
+    },
+    { getBrouterPlacesDirectory },
+  ] = await Promise.all([
     import('../../offline-regions/repositories/offlineRegionRepository'),
     import('expo-file-system'),
+    import('../../offline-regions/utils/brouterTiles'),
+    import('../../offline-regions/services/brouterDataService'),
   ]);
 
   let indexes: InstalledRoutingIndex[];
@@ -62,30 +79,97 @@ async function installedIndexesWithPlaces(
     return [];
   }
 
-  return indexes.filter((index) => {
+  const databases: InstalledPlaceDatabase[] = [];
+  const seen = new Set<string>();
+
+  for (const index of indexes) {
     if (near && !boundsContainCoordinate(index.bounds, near)) {
-      return false;
+      continue;
+    }
+
+    const manifestFile = new File(index.installedPath, REGION_MANIFEST_NAME);
+    let placeTiles: string[] | null = null;
+
+    if (manifestFile.exists) {
+      try {
+        const parsed = JSON.parse(manifestFile.textSync()) as {
+          backend?: unknown;
+          placeTiles?: unknown;
+        };
+
+        if (
+          parsed.backend === 'brouter' &&
+          Array.isArray(parsed.placeTiles) &&
+          parsed.placeTiles.every((item) => typeof item === 'string')
+        ) {
+          placeTiles = parsed.placeTiles as string[];
+        }
+      } catch {
+        placeTiles = null;
+      }
+    }
+
+    if (placeTiles) {
+      const directory = getBrouterPlacesDirectory().uri.replace(/\/+$/, '');
+
+      for (const tile of placeTiles) {
+        const fileName = brouterPlacesDatabaseName(tile);
+        const key = `${directory}/${fileName}`;
+
+        if (seen.has(key)) {
+          continue;
+        }
+
+        try {
+          if (new File(getBrouterPlacesDirectory(), fileName).exists) {
+            seen.add(key);
+            databases.push({
+              regionId: index.id,
+              bounds: index.bounds,
+              fileName,
+              directory,
+            });
+          }
+        } catch {
+          continue;
+        }
+      }
+      continue;
     }
 
     try {
-      return new File(index.installedPath, PLACES_DATABASE_NAME).exists;
+      if (new File(index.installedPath, PLACES_DATABASE_NAME).exists) {
+        const directory = index.installedPath.replace(/\/+$/, '');
+        const key = `${directory}/${PLACES_DATABASE_NAME}`;
+
+        if (!seen.has(key)) {
+          seen.add(key);
+          databases.push({
+            regionId: index.id,
+            bounds: index.bounds,
+            fileName: PLACES_DATABASE_NAME,
+            directory,
+          });
+        }
+      }
     } catch {
-      return false;
+      continue;
     }
-  });
+  }
+
+  return databases;
 }
 
 async function queryIndex(
-  index: InstalledRoutingIndex,
+  index: InstalledPlaceDatabase,
   ftsQuery: string,
   near: Coordinate | null,
 ): Promise<PlaceResult[]> {
   const { openDatabaseAsync } = await import('expo-sqlite');
-  const directory = index.installedPath.replace(/\/+$/, '');
   const database = await openDatabaseAsync(
-    PLACES_DATABASE_NAME,
+    index.fileName,
     { useNewConnection: true },
-    directory,
+    index.directory,
   );
 
   try {
@@ -122,7 +206,7 @@ async function queryIndex(
         undefined;
 
       results.push({
-        id: `offline:${index.id}:${
+        id: `offline:${index.regionId}:${
           row.osm_type && row.osm_id
             ? `${row.osm_type}${row.osm_id}`
             : `${latitude.toFixed(5)}:${longitude.toFixed(5)}`
@@ -151,7 +235,7 @@ export async function searchOfflinePlaces(
 
   const near = options.near ?? null;
   const limit = Math.min(Math.max(options.limit ?? 5, 1), 20);
-  const indexes = await installedIndexesWithPlaces(near);
+  const indexes = await installedPlaceDatabases(near);
 
   if (indexes.length === 0) {
     return [];

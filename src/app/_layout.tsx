@@ -3,7 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import '@/features/navigation/services/valhallaNativeBridge';
+import '@/features/navigation/services/brouterAvailability';
 
 SplashScreen.preventAutoHideAsync();
 

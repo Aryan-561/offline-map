@@ -22,7 +22,7 @@ import {
   deactivateOfflineRouting,
   getActiveOfflineRegionId,
   isOfflineRoutingActivated,
-} from '../services/localValhallaAdapter';
+} from '../services/brouterAdapter';
 
 
 export function NavigationScreen() {

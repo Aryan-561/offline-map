@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { formatBytes } from '@/features/offline-maps/services/regionService';
-import { activateOfflineRouting } from '@/features/navigation/services/localValhallaAdapter';
+import { activateOfflineRouting } from '@/features/navigation/services/brouterAdapter';
 import { useTheme } from '@/hooks/use-theme';
 
 import { OfflineRegionList } from '../components/OfflineRegionList';
@@ -101,7 +101,7 @@ export default function OfflineRegionsScreen({
           <View style={styles.headerText}>
             <ThemedText type="subtitle">Offline regions</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              Download map rendering data and Valhalla routing data together so a
+              Download map rendering data and BRouter routing data together so a
               region can work without a connection.
             </ThemedText>
           </View>
@@ -135,16 +135,16 @@ export default function OfflineRegionsScreen({
 
         {!list.isRoutingConfigured && (
           <Notice
-            title="Routing data service not configured"
-            message="Map downloads still work, but routing packages need EXPO_PUBLIC_ROUTING_DATA_BASE_URL. See tools/routing-data/README.md for the backend contract."
+            title="BRouter data not configured"
+            message="Map downloads still work, but offline routing needs EXPO_PUBLIC_BROUTER_DATA_BASE_URL. See tools/brouter-data/README.md for the release setup."
             tone="warning"
           />
         )}
 
         {!list.isLocalEngineAvailable && (
           <Notice
-            title="Local Valhalla engine not bundled"
-            message="Routing data can be downloaded and verified, but this build or platform has no registered native Valhalla engine. Use a development build that includes the Valhalla module; offline route calculation stays disabled here."
+            title="BRouter engine not bundled"
+            message="Routing data can be downloaded and verified, but this build or platform has no native BRouter engine. Use an Android development build that includes modules/brouter-engine; offline route calculation stays disabled here."
             tone="warning"
           />
         )}
@@ -286,9 +286,9 @@ export default function OfflineRegionsScreen({
 
         <ThemedText type="small" themeColor="textSecondary" style={styles.footerNote}>
           A region is marked navigation-ready only when both datasets are
-          installed and checksum-verified and a native Valhalla engine is
-          registered. Verify on a physical device in airplane mode before relying
-          on it.
+          installed and checksum-verified and the native BRouter engine is
+          registered. Verify on a physical Android device in airplane mode before
+          relying on it.
         </ThemedText>
       </View>
     </ScrollView>

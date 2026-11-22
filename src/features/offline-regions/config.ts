@@ -93,6 +93,21 @@ export const ROUTING_DATA_BASE_URL =
   normalizeBaseUrl(process.env.EXPO_PUBLIC_ROUTING_DATA_BASE_URL);
 
 /**
+ * GitHub Releases (or any static mirror) that hosts `brouter-manifest.json`,
+ * the `.rd5` segment tiles and the per-5-degree `places-*.sqlite` indexes.
+ * BRouter routing is disabled, not faked, when this is unset.
+ */
+export const BROUTER_DATA_BASE_URL = normalizeBaseUrl(
+  process.env.EXPO_PUBLIC_BROUTER_DATA_BASE_URL,
+);
+
+/** BRouter release bundled in `modules/brouter-engine`. */
+export const SUPPORTED_BROUTER_ENGINE_VERSION =
+  process.env.EXPO_PUBLIC_BROUTER_ENGINE_VERSION?.trim() || '1.7.10';
+
+export const BROUTER_MANIFEST_TIMEOUT_MS = 30_000;
+
+/**
  * The Valhalla build the native adapter is compiled against. The backend must
  * generate tiles for this engine version.
  */

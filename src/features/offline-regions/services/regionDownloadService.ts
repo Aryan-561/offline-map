@@ -3,7 +3,7 @@ import { AppState, Platform } from 'react-native';
 
 import { getStyleCapabilities } from '@/features/offline-maps/services/styleService';
 import { defaultZoomRange } from '@/features/offline-maps/services/regionService';
-import { isLocalValhallaRegistered } from '@/features/navigation/services/localValhallaAvailability';
+import { isBrouterRegistered } from '@/features/navigation/services/brouterAvailability';
 
 import { MIN_FREE_STORAGE_MARGIN_BYTES, ROUTING_BUFFER_KM } from '../config';
 import * as repository from '../repositories/offlineRegionRepository';
@@ -19,7 +19,7 @@ import {
   type OfflineRegionStorageInfo,
   type OfflineRegionVerification,
 } from '../types/offlineRegion.types';
-import type { RoutingPackageManifest } from '../types/routingPackage.types';
+import type { BrouterInstallOutcome } from '../types/brouter.types';
 import {
   boundsCenter,
   boundsForRadius,
@@ -32,21 +32,16 @@ import { isRegionNavigationReady } from '../utils/navigationReadiness';
 import { combineDownloadProgress } from '../utils/progress';
 import * as mapService from './mapDownloadService';
 import {
-  buildRoutingPackageRequest,
-  estimateRoutingPackage,
-  isRoutingPackageServiceConfigured,
-  resolveRoutingManifest,
-} from './routingPackageService';
-import {
-  cancelRoutingDownload,
-  deleteRoutingData,
-  downloadRoutingPackage,
-  inspectInstalledRouting,
-  pauseRoutingDownload,
-  readStagingManifest,
-  verifyInstalledRoutingData,
-  type RoutingDownloadOutcome,
-} from './routingDataDownloadService';
+  cancelBrouterRegion,
+  deleteBrouterRegion,
+  estimateBrouterRegion,
+  getBrouterDataBaseUrl,
+  inspectInstalledBrouter,
+  installBrouterRegion,
+  isBrouterConfigured,
+  pauseBrouterRegion,
+  readBrouterRegionPackage,
+} from './brouterDataService';
 
 const PERSIST_DEBOUNCE_MS = 750;
 
@@ -60,7 +55,6 @@ let appStateSubscription: { remove: () => void } | null = null;
 const listeners = new Set<Listener>();
 const startingRegions = new Set<string>();
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const routingManifests = new Map<string, RoutingPackageManifest>();
 const routingAttempts = new Map<string, number>();
 
 export function subscribe(listener: Listener): () => void {
@@ -83,7 +77,7 @@ export function isMapDownloadSupported(): boolean {
 }
 
 export function isRoutingServiceConfigured(): boolean {
-  return isRoutingPackageServiceConfigured();
+  return isBrouterConfigured();
 }
 
 export function getStorageInfo(): OfflineRegionStorageInfo {
@@ -247,7 +241,7 @@ export async function pauseRegion(id: string): Promise<OfflineRegion> {
   }
 
   if (region.routingStatus === 'downloading' || region.routingStatus === 'pending') {
-    tasks.push(pauseRoutingDownload(region.id));
+    pauseBrouterRegion(region.id);
   }
 
   const results = await Promise.allSettled(tasks);
@@ -335,7 +329,7 @@ export async function cancelRegion(id: string): Promise<OfflineRegion> {
   const region = requireRegion(id);
 
   invalidateRoutingAttempt(id);
-  await cancelRoutingDownload(id);
+  cancelBrouterRegion(id);
 
   if (
     region.mapRegionId &&
@@ -362,9 +356,8 @@ export async function removeRegion(id: string): Promise<void> {
   const region = requireRegion(id);
 
   invalidateRoutingAttempt(id);
-  await cancelRoutingDownload(id).catch(() => undefined);
-  await deleteRoutingData(id).catch(() => undefined);
-  routingManifests.delete(id);
+  cancelBrouterRegion(id);
+  await deleteBrouterRegion(id).catch(() => undefined);
 
   if (region.mapRegionId) {
     await mapService.removeMapDownload(region.mapRegionId).catch(() => undefined);
@@ -396,16 +389,16 @@ export async function verifyRegion(id: string): Promise<OfflineRegionVerificatio
     messages.push('Map data has not been downloaded.');
   }
 
-  const routing = await verifyInstalledRoutingData(id);
+  const routing = await inspectInstalledBrouter(id, { verifyChecksums: true });
   routingOk = routing.ok;
-  messages.push(routing.message);
+  messages.push(routing.ok ? 'Routing data verified.' : routing.reason);
 
   const checksumVerified = routing.ok;
   const updated = await patchRegion(id, {
     mapStatus: mapOk ? 'completed' : 'failed',
     routingStatus: routingOk ? 'completed' : 'failed',
     routingChecksumVerified: checksumVerified,
-    routingError: routingOk ? null : routing.message,
+    routingError: routing.ok ? null : routing.reason,
   });
 
   return {
@@ -501,53 +494,14 @@ async function startRoutingPart(id: string): Promise<void> {
   const attempt = beginRoutingAttempt(id);
 
   try {
-    if (!isRoutingPackageServiceConfigured()) {
+    if (!isBrouterConfigured()) {
       throw new OfflineRegionsError(
         'routing_configuration',
-        'Routing data is not configured. Set EXPO_PUBLIC_ROUTING_DATA_BASE_URL to a routing-data service, then retry.',
+        'BRouter data is not configured. Set EXPO_PUBLIC_BROUTER_DATA_BASE_URL to the release asset URL, then retry.',
       );
     }
 
-    const packageRequest = buildRoutingPackageRequest({
-      regionId: region.id,
-      regionName: region.name,
-      center: region.center,
-      radiusKm: region.radiusKm,
-      bounds: region.bounds,
-    });
-
-    // Resume from a verified staging manifest without requiring the backend to
-    // still be reachable. Full validation still happens before installation.
-    let manifest = routingManifests.get(id) ?? (await readStagingManifest(id));
-    let manifestUrl = region.routingManifestUrl;
-
-    if (!isRoutingAttemptCurrent(id, attempt)) {
-      return;
-    }
-
-    if (!manifest) {
-      const resolution = await resolveRoutingManifest(packageRequest, {
-        waitForReady: true,
-      });
-
-      if (!isRoutingAttemptCurrent(id, attempt)) {
-        return;
-      }
-
-      if (resolution.status !== 'ready') {
-        await patchRegion(id, {
-          routingStatus: 'downloading',
-          routingError:
-            'The routing-data service is still building this package. Keep the app open and retry shortly.',
-        });
-        return;
-      }
-
-      manifest = resolution.manifest;
-      manifestUrl = resolution.manifestUrl;
-    }
-
-    routingManifests.set(id, manifest);
+    const estimate = await estimateBrouterRegion(region.bounds);
 
     if (!isRoutingAttemptCurrent(id, attempt)) {
       return;
@@ -557,18 +511,18 @@ async function startRoutingPart(id: string): Promise<void> {
       routingStatus: 'downloading',
       routingProgress: region.routingProgress,
       routingDownloadedBytes: region.routingDownloadedBytes,
-      routingTotalBytes: manifest.downloadSizeBytes,
-      routingCoverageBounds: manifest.coverageBounds,
-      routingDataVersion: manifest.valhallaDataVersion,
-      routingEngineVersion: manifest.valhallaEngineVersion,
-      routingPackageFormat: manifest.packageFormat,
-      routingManifestUrl: manifestUrl,
+      routingTotalBytes: estimate.estimatedSizeBytes,
+      routingCoverageBounds: estimate.coverageBounds,
+      routingDataVersion: null,
+      routingEngineVersion: null,
+      routingPackageFormat: 'directory',
+      routingManifestUrl: `${getBrouterDataBaseUrl()}/brouter-manifest.json`,
       routingError: null,
     });
 
-    const outcome = await downloadRoutingPackage({
+    const outcome = await installBrouterRegion({
       regionId: id,
-      manifest,
+      bounds: region.bounds,
       callbacks: {
         onProgress: (progress) => {
           if (!isRoutingAttemptCurrent(id, attempt)) {
@@ -616,7 +570,7 @@ async function startRoutingPart(id: string): Promise<void> {
 
 async function applyRoutingOutcome(
   id: string,
-  outcome: RoutingDownloadOutcome,
+  outcome: BrouterInstallOutcome,
 ): Promise<void> {
   if (outcome.status === 'paused') {
     patchRegion(id, {
@@ -635,15 +589,15 @@ async function applyRoutingOutcome(
     routingStatus: 'completed',
     routingProgress: 100,
     routingDownloadedBytes: outcome.sizeBytes,
-    routingTotalBytes: outcome.manifest.downloadSizeBytes,
+    routingTotalBytes: outcome.sizeBytes,
     routingSizeBytes: outcome.sizeBytes,
     routingChecksumVerified: true,
-    routingCoverageBounds: outcome.manifest.coverageBounds,
-    routingDataVersion: outcome.manifest.valhallaDataVersion,
-    routingEngineVersion: outcome.manifest.valhallaEngineVersion,
-    routingPackageFormat: outcome.manifest.packageFormat,
+    routingCoverageBounds: outcome.package.coverageBounds,
+    routingDataVersion: outcome.package.dataVersion,
+    routingEngineVersion: outcome.package.engineVersion,
+    routingPackageFormat: 'directory',
     routingInstalledPath: outcome.installedPath,
-    routingManifestPath: `${outcome.installedPath}/manifest.json`,
+    routingManifestPath: outcome.manifestPath,
     routingError: null,
   });
 }
@@ -794,31 +748,20 @@ async function downloadRoutingForImportedRegion(id: string): Promise<void> {
   if (
     !region ||
     region.routingStatus !== 'paused' ||
-    !isRoutingPackageServiceConfigured()
+    !isBrouterConfigured()
   ) {
     return;
   }
 
   try {
-    const resolution = await resolveRoutingManifest(
-      buildRoutingPackageRequest({
-        regionId: region.id,
-        regionName: region.name,
-        center: region.center,
-        radiusKm: region.radiusKm,
-        bounds: region.bounds,
-      }),
-      { waitForReady: false },
-    );
+    const estimate = await estimateBrouterRegion(region.bounds);
 
     if (
-      resolution.status !== 'ready' ||
-      getRegion(id)?.routingStatus !== 'paused'
+      estimate.estimatedSizeBytes !== null &&
+      getRegion(id)?.routingStatus === 'paused'
     ) {
-      return;
+      await restartRouting(id);
     }
-
-    await restartRouting(id);
   } catch {
     // Keep the imported region paused so the user can retry manually.
   }
@@ -829,13 +772,16 @@ async function recoverInterruptedRouting(): Promise<void> {
 
   for (const region of regions) {
     if (region.routingStatus === 'completed') {
-      const inspection = await inspectInstalledRouting(region.id);
+      const inspection = await inspectInstalledBrouter(region.id);
 
       if (inspection.ok) {
         const restored: OfflineRegion = {
           ...region,
           routingInstalledPath: inspection.installedPath,
+          routingManifestPath: inspection.manifestPath,
           routingSizeBytes: inspection.sizeBytes,
+          routingDataVersion: inspection.package.dataVersion,
+          routingEngineVersion: inspection.package.engineVersion,
           routingChecksumVerified: true,
           routingError: null,
           updatedAt: new Date().toISOString(),
@@ -859,14 +805,13 @@ async function recoverInterruptedRouting(): Promise<void> {
     }
 
     if (region.routingStatus === 'downloading' || region.routingStatus === 'pending') {
-      const staging = await readStagingManifest(region.id);
+      const installed = await readBrouterRegionPackage(region.id);
       recovered.push({
         ...region,
         routingStatus: 'paused',
-        routingTotalBytes: staging
-          ? staging.downloadSizeBytes
-          : region.routingTotalBytes,
-        routingCoverageBounds: staging?.coverageBounds ?? region.routingCoverageBounds,
+        routingTotalBytes: installed?.sizeBytes ?? region.routingTotalBytes,
+        routingCoverageBounds:
+          installed?.coverageBounds ?? region.routingCoverageBounds,
         routingError:
           'The routing download was interrupted when the app closed. Resume to continue.',
         isNavigationReady: false,
@@ -945,7 +890,7 @@ function patchRegion(
 }
 
 function deriveNavigationReady(region: OfflineRegion): boolean {
-  return isRegionNavigationReady(region, isLocalValhallaRegistered());
+  return isRegionNavigationReady(region, isBrouterRegistered());
 }
 
 /**
@@ -1124,10 +1069,6 @@ function normalizeName(
   return `Offline region ${center.latitude.toFixed(4)}, ${center.longitude.toFixed(4)}`;
 }
 
-/**
- * Exposed for the UI estimate step. This never downloads or fabricates a
- * routing size; it asks the configured backend.
- */
 export async function estimateRoutingForRegion(input: {
   regionId: string;
   regionName: string;
@@ -1139,14 +1080,23 @@ export async function estimateRoutingForRegion(input: {
   coverageBounds: OfflineRegion['bounds'] | null;
   buildOnDemand: boolean;
 }> {
-  const request = buildRoutingPackageRequest(input);
-  const estimate = await estimateRoutingPackage(request);
+  if (!isBrouterConfigured()) {
+    return {
+      estimatedSizeBytes: null,
+      coverageBounds: null,
+      buildOnDemand: false,
+    };
+  }
 
-  return {
-    estimatedSizeBytes: estimate.estimatedSizeBytes,
-    coverageBounds: estimate.coverageBounds,
-    buildOnDemand: estimate.buildOnDemand,
-  };
+  try {
+    return await estimateBrouterRegion(input.bounds);
+  } catch {
+    return {
+      estimatedSizeBytes: null,
+      coverageBounds: null,
+      buildOnDemand: false,
+    };
+  }
 }
 
 export function assertStorageForRouting(sizeBytes: number): void {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { isLocalValhallaAvailable } from '@/features/navigation/services/localValhallaAdapter';
-import { subscribeLocalValhallaAvailability } from '@/features/navigation/services/localValhallaAvailability';
+import { isBrouterAvailable } from '@/features/navigation/services/brouterAdapter';
+import { subscribeBrouterAvailability } from '@/features/navigation/services/brouterAvailability';
 
 import * as regionDownloadService from '../services/regionDownloadService';
 import {
@@ -25,12 +25,12 @@ export function useOfflineRegions() {
     regionDownloadService.isRoutingServiceConfigured(),
   );
   const [isLocalEngineAvailable, setIsLocalEngineAvailable] = useState(() =>
-    isLocalValhallaAvailable(),
+    isBrouterAvailable(),
   );
 
   useEffect(() => {
-    return subscribeLocalValhallaAvailability(() => {
-      setIsLocalEngineAvailable(isLocalValhallaAvailable());
+    return subscribeBrouterAvailability(() => {
+      setIsLocalEngineAvailable(isBrouterAvailable());
       regionDownloadService.refreshNavigationReadiness();
       setRegions(regionDownloadService.getRegions());
     });
